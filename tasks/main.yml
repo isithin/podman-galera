@@ -1,0 +1,16 @@
+---
+
+- name: general prep
+  include: prep.yml
+
+
+- name: include instance tasks
+  include_tasks: instance.yml
+  loop: "{{podman_galera_instances|dict2items}}"
+  vars:
+    instance: "{{single_instance['value']}}"
+    instance_name: "{{single_instance['key']}}"
+  loop_control:
+    loop_var: single_instance
+    label: "{{ single_instance['key'] }}"
+

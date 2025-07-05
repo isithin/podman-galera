@@ -1,0 +1,7 @@
+[Service]
+ExecStart=/opt/galera/scripts/instance_switch.sh
+User=nagios
+StandardInput=socket
+
+[Install]
+WantedBy=multi-user.target

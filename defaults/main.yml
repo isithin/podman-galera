@@ -1,0 +1,33 @@
+---
+podman_galera_bootstrap_node: "galera-test-01.berlin.strato.de"
+
+podman_galera_vg_mysql: vg0
+
+podman_galera_use_carole: true
+
+podman_galera_sql_net: sql
+
+podman_galera_dirs:
+  - "/mysql"
+  - "/etc/mysql"
+  - "/etc/mysql/ssl"
+  - "/root/galera/images"
+  - "/opt/galera/rpms"
+
+
+podman_galera_globals:
+  mysql_mon4galera_pwd: "{{ vault_galera_strato_globals_mysql_mon4galera_pwd }}"
+  sql_user:
+    - { name: 'mon4galera', password: '{{ vault_galera_strato_globals_mysql_mon4galera_pwd }}', state: 'present', host: 'localhost' ,  priv: '*.*:PROCESS' }
+  mysql_root_pwd: "{{ vault_galera_strato_globals_mysql_root_pwd }}"
+
+podman_galera_instances:
+  data:
+    state: "present"
+    lvsize: 10G
+    sql_dbs:
+      - { name: 'datatest', state: 'present', encoding: 'utf8', collation: 'utf8_bin'  }
+    sql_users:  # add all needed users and client hosts
+      - { name: 'data_test', password: '{{ vault_podman_galera_instances_data_sql_user_data_test }}', encrypted: 'no', state: 'present', host: '127.0.0.1', priv: 'datatest.*:SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,ALTER,INDEX' }
+
+### all variables regarding the container creation are placed in the podman role defaults ###

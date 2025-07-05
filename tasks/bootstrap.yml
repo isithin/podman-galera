@@ -1,0 +1,52 @@
+---
+
+- debug:
+    msg: "I will bootstrap {{instance_name}}!!!"
+
+- name: check if we already bootstrapped in the past
+  stat: 
+    path: "/opt/galera/tmp/ansible-state-secure-{{instance_name}}"
+  register: p
+
+- name: "bootstrap of {{instance_name}}"
+  ansible.builtin.systemd:
+    name: "{{instance_name}}"
+    state: started
+  register: r_bootstrap
+  when: not p.stat.exists
+
+- name: "Wait for port {{podman_instance[instance_name]['user']}} to become open, so we know the init process is done"
+  ansible.builtin.wait_for:
+    port: "{{podman_instance[instance_name]['user']}}"
+
+- name: "remove not needed root accounts for {{instance_name}}"
+  mysql_user:
+    login_password: 'root'
+    name: 'root'
+    host: "{{item}}"
+    state: absent
+    login_unix_socket: "/mysql/{{instance_name}}/tmp/mysql.sock"
+  with_items:
+    - 127.0.0.1
+    - ::1
+    - "{{ansible_hostname}}"
+    - "{{ansible_fqdn}}"
+  when: not p.stat.exists
+
+- name: "set root pwd for {{instance_name}}"
+  mysql_user:
+    login_password: 'root'
+    name: 'root'
+    host: 'localhost'
+    password: "{{podman_galera_globals.mysql_root_pwd}}"
+    login_unix_socket: "/mysql/{{instance_name}}/tmp/mysql.sock"
+  register: rootloginchanged
+  when: not p.stat.exists
+
+
+- name: "create marker for future runs of {{instance_name}}"
+  copy:
+    content: "secure-installation run"
+    dest: "/opt/galera/tmp/ansible-state-secure-{{instance_name}}"
+  when: rootloginchanged is changed
+

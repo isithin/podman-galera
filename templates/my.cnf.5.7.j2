@@ -1,0 +1,57 @@
+
+{% set cluster_member = [] %}
+
+{% if podman_galera_bootstrap_node != inventory_hostname %}
+  {%- for host in groups[podman_instance_network[instance_name]['hosts']] %}
+    {%- if host != inventory_hostname %}
+      {%- set _ = cluster_member.append(hostvars[host].container_ip)-%}
+    {% endif -%}
+  {% endfor -%}
+{% endif -%}
+
+[mysqld]
+
+ignore-db-dir=lost+found
+datadir=/var/lib/mysql
+socket=/tmp/mysql.sock
+skip-host-cache
+
+#coredumper
+#server_id=0
+binlog_format=ROW
+default_storage_engine=InnoDB
+
+innodb_flush_log_at_trx_commit  = 0
+innodb_flush_method             = O_DIRECT
+innodb_file_per_table           = 1
+innodb_autoinc_lock_mode=2
+
+bind_address = 0.0.0.0
+
+wsrep_slave_threads=2
+
+wsrep_cluster_address=gcomm://{{",".join(cluster_member)}}
+wsrep_provider=/usr/lib64/galera3/libgalera_smm.so
+
+wsrep_cluster_name=cluster
+wsrep_node_address={{container_ip}}
+wsrep_node_incoming_address=PlaceholderForLB:3306
+wsrep_sst_method=xtrabackup-v2
+wsrep_sst_auth='xtrabackup:xtrabackup'
+
+# SSL #
+ssl-ca                         = /cert/ca.crt
+ssl-cert                       = /cert/{{instance_name}}.cert.pem
+ssl-key                        = /cert/{{instance_name}}.key.pem
+
+[client]
+socket=/tmp/mysql.sock
+
+[sst]
+progress=/var/lib/mysql/sst_in_progress
+encrypt = 4
+ssl-ca                         = /cert/ca.crt
+ssl-cert                       = /cert/{{instance_name}}.cert.pem
+ssl-key                        = /cert/{{instance_name}}.key.pem
+
+

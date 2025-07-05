@@ -1,0 +1,54 @@
+---
+
+- name: we can only configure grants if server is running
+  stat:
+    path: "/mysql/{{instance_name}}/mysql.sock"
+  register: sql_running
+
+- name: DEBUG
+  debug:
+    msg: "{{instance['sql_users']}}"
+
+- name: create all requested user databases
+  mysql_db:
+    login_unix_socket: "/mysql/{{instance_name}}/mysql.sock"
+    login_password: "{{podman_galera_globals.mysql_root_pwd}}"
+    name: "{{ item.name }}"
+    state: "{{ item.state }}"
+    encoding: "{{ item.encoding }}"
+    collation: "{{ item.collation }}"
+  with_items: "{{instance['sql_dbs']| default([])}}"
+  when: sql_running.stat.exists and instance['sql_dbs'] is defined
+
+- name: create all requested db users
+  mysql_user:
+    login_unix_socket: "/mysql/{{instance_name}}/mysql.sock"
+    login_password: "{{podman_galera_globals.mysql_root_pwd}}"
+    name: "{{ item.name }}"
+    host: "{{ item.host }}"
+    password: "{{ item.password }}"
+    priv: "{{ item.priv }}"
+    state: "{{ item.state }}"
+  with_items: "{{instance['sql_users']| default([])}}"
+  when: sql_running.stat.exists and instance['sql_users'] is defined
+  #  no_log: true
+  loop_control:
+    label: "{{ item['state']}} > {{item['name']}}@{{item['host']}} with {{item['priv'] }}"
+
+- name: create all global db users
+  mysql_user:
+    login_unix_socket: "/mysql/{{instance_name}}/mysql.sock"
+    login_password: "{{podman_galera_globals.mysql_root_pwd}}"
+    name: "{{ item.name }}"
+    host: "{{ item.host }}"
+    password: "{{ item.password }}"
+    priv: "{{ item.priv }}"
+    state: "{{ item.state }}"
+  with_items: "{{podman_galera_globals.sql_user| default([])}}"
+  when: sql_running.stat.exists and podman_galera_globals.sql_user is defined
+  #  no_log: true
+  loop_control:
+    label: "{{ item['state']}} > {{item['name']}}@{{item['host']}} with {{item['priv'] }}"
+
+
+

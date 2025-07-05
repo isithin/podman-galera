@@ -1,0 +1,178 @@
+---
+- set_fact:
+    podman_instance: {}
+
+- set_fact:
+    podman_instance_network: {}
+
+- debug:
+    msg: "INSTANCE NAME: {{[instance_name]}}"
+
+
+- set_fact:
+    podman_instance: "{{podman_instance |combine({item.key: item.value})}}"
+  when: "{{item.key in [instance_name]}}"
+  with_dict: "{{podman_container_quadlets}}"
+
+- set_fact:
+    podman_instance_network: "{{podman_instance_network |combine({item.key: item.value})}}"
+  when: "{{item.key in [podman_container_quadlets[instance_name]['network']]}}"
+  with_dict: "{{podman_overlay_networks}}"
+
+
+- name: get ip of bootstrapping cluster node
+  set_fact:
+    bootstrap_cluster_ip: >-
+      {%- set index_in_group = groups[podman_overlay_networks[podman_instance[instance_name]['network']]['hosts']].index(podman_galera_bootstrap_node) -%}
+      {{podman_instance_network[podman_instance[instance_name]['network']]['net_prefix']}}{{podman_instance_network[podman_instance[instance_name]['network']]['net_id']}}.1{{index_in_group}}1
+  when: podman_galera_bootstrap_node != inventory_hostname
+
+
+- name: Write bootstrapping container ip in env of container
+  set_fact:
+    podman_instance: "{{ podman_instance|combine({instance_name: {'env': {'CLUSTER_JOIN': bootstrap_cluster_ip}}}, recursive=True) }}"
+    #podman_instance: "{{ podman_instance|combine({instance_name: {'env': {'CLUSTER_JOIN': hostvars[podman_galera_bootstrap_node].podman_instance[instance_name]['hostname']}}}, recursive=True) }}"
+  when: podman_galera_bootstrap_node != inventory_hostname
+
+
+- debug:
+    var: podman_instance
+  when: podman_galera_bootstrap_node != inventory_hostname
+
+- set_fact:
+    pvnum: "{{hostvars[inventory_hostname]['ansible_lvm']['vgs'][galera_vg_mysql]['num_pvs']}}"
+
+
+- name: create group for {{instance_name}}
+  group:
+    gid: "{{podman_instance[instance_name]['user']}}"
+    name: "{{instance_name}}"
+    state: present
+
+
+- name: create user for {{instance_name}}
+  user:
+    name: "{{instance_name}}"
+    group: "{{instance_name}}"
+    uid: "{{podman_instance[instance_name]['user']}}"
+    shell: "/sbin/nologin"
+    createhome: no
+    home: "/{{instance_name}}"
+    state: present
+
+
+- name: prepare/resize lvm for {{instance_name}}
+  lvol:
+    vg: "{{podman_galera_vg_mysql}}"
+    lv: "{{instance_name}}"
+    shrink: no
+    state: present
+    size: "{{ instance['lvsize'] | default('10G') }}"
+    opts: -i "{{pvnum | default('1')}}" -I 256
+  register: lvm
+
+
+- name: prepare/resize XFS for {{instance_name}}
+  filesystem:
+    fstype: xfs
+    dev: "/dev/{{podman_galera_vg_mysql}}/{{instance_name}}"
+    resizefs: yes
+  when: lvm is changed
+
+
+- name: create mountpoint for {{instance_name}}
+  file:
+    path: "/mysql/{{instance_name}}"
+    owner: "{{instance_name}}"
+    group: "{{instance_name}}"
+    mode: 0755
+    state: directory
+
+
+- name: mount filesystems for {{instance_name}}
+  mount:
+    name: "/mysql/{{instance_name}}"
+    src: "/dev/{{galera_vg_mysql}}/{{instance_name}}"
+    fstype: xfs
+    state: mounted
+
+
+- name: create basic db dir structure for {{instance_name}}
+  file:
+    path: "/mysql/{{instance_name}}/{{item}}"
+    state: directory
+    mode: 0750
+    owner: "{{instance_name}}"
+    group: "{{instance_name}}" 
+  with_items:
+    - cert
+    - config
+    - config/conf.d
+    - datadir
+    - tmp
+
+
+- name: copy certificate and key file
+  copy:
+    remote_src: true
+    src: "/etc/mysql/ssl/{{inventory_hostname_short}}.{{galera_sql_net}}.{{item}}.pem"
+    dest: "/etc/mysql/ssl/{{instance_name}}.{{item}}.pem" #lieber /mysql/instance/cert?
+    mode: 0640
+    owner: "{{instance_name}}"
+    group: "{{instance_name}}"
+  with_items:
+    - "cert"
+    - "key"
+
+
+- name: re-owning top level folder of instance
+  file:
+    path: "/mysql/{{instance_name}}"
+    mode: 0755
+    owner: "{{instance_name}}"
+    group: "{{instance_name}}"
+
+
+- name: include podman role
+  include_role:
+    name: podman
+  vars:
+    podman_container_quadlets: "{{podman_instance}}" 
+    podman_overlay_networks: "{{podman_instance_network}}"
+    podman_start_container: False
+
+
+- debug:
+    msg: "CONTAINER-IP: {{hostvars[inventory_hostname].container_ip}}"
+
+
+- name: generate mysql configuration file for {{instance_name}}
+  template:
+    src: "templates/my.cnf.{{ podman_instance[instance_name]['image'][-3:] }}.j2"
+    dest: "/mysql/{{instance_name}}/config/node.cnf"
+    owner: "{{instance_name}}"
+    group: "{{instance_name}}"
+    mode: 0755
+  when:
+    - hostvars[inventory_hostname].container_ip is defined
+    - hostvars[inventory_hostname].container_ip_range is defined 
+
+
+- include: bootstrap.yml
+  when: ( inventory_hostname == podman_galera_bootstrap_node and strato_bootstrap is defined )
+
+
+- include: dbs_and_user.yml
+  when: inventory_hostname == podman_galera_bootstrap_node
+
+
+- name: "starting {{instance_name}} on {{inventory_hostname}}"
+  ansible.builtin.systemd:
+    name: "{{instance_name}}"
+    state: started
+
+
+
+
+
+

@@ -1,0 +1,92 @@
+---
+
+- name: create basic directory structures
+  file:
+    path: "{{item}}"
+    owner: root
+    group: root
+    mode: 0755
+    state: directory
+  with_items: "{{podman_galera_dirs}}"
+
+# If you dont use the carole it will not be run
+- name: copy certificate files in case are running with pki-client role
+  block:
+    - name: generate dhparams when they dont exists yet
+      openssl_dhparam:
+        path: "/etc/mysql/ssl/dhparams.pem"
+
+    - name: "copy wsrep ssl files"
+      copy: 
+        dest: "{{item.dst}}"
+        src: "{{item.src}}"
+        remote_src: true
+        mode: 0640
+        owner: root
+        group: root
+      with_items:
+        - { src: '/root/galera/ssl-wsrep/{{inventory_hostname_short}}.{{galera_sql_net}}.pem', dst: '/root/galera/{{inventory_hostname_short}}.{{galera_sql_net}}.pem' }
+        - { src: '/root/galera/ssl-wsrep/{{inventory_hostname_short}}.{{galera_sql_net}}.key', dst: '/root/galera/{{inventory_hostname_short}}.{{galera_sql_net}}.key' }
+        - { src: '/root/galera/ssl-wsrep/ca.cert.pem', dst: '/root/galera/ca.crt' }
+
+    - name: "copy mysql ssl client files"
+      copy:
+        src: "{{item.src}}"
+        dest: "{{item.dst}}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: 0640
+      with_items:
+        - { src: '/root/galera/ssl-client/ca.cert.pem', dst: '/root/galera/ca.galera-client.crt' }
+        - { src: '/root/galera/ssl-client/{{ansible_fqdn}}.pem', dst: '/root/galera/{{inventory_hostname_short}}.galera-client.crt' }
+        - { src: '/root/galera/ssl-client/{{ansible_fqdn}}.key', dst: '/root/galera/{{inventory_hostname_short}}.galera-client.key' }
+
+  when:
+    - podman_galera_use_carole | default("no") | bool
+
+- name: copy basic required files and stop if they are missing
+  copy:
+    src: "{{item.src}}"
+    dest: "{{item.dst}}"
+    remote_src: "{{item.remote}}"
+    mode: 0644
+    owner: root
+    group: root
+  with_items:
+    - { src: '/root/galera/ca.crt', dst: '/etc/mysql/ssl/ca.crt', remote: true }
+    - { src: "/root/galera/{{inventory_hostname_short}}.{{galera_sql_net}}.pem", dst: "/etc/mysql/ssl/{{inventory_hostname_short}}.{{galera_sql_net}}.cert.pem", remote: true }
+    - { src: "/root/galera/{{inventory_hostname_short}}.{{galera_sql_net}}.key", dst: "/etc/mysql/ssl/{{inventory_hostname_short}}.{{galera_sql_net}}.key.pem", remote: true }
+    - { src: "/root/galera/ca.galera-client.crt", dst: "/etc/mysql/ssl/ca.galera-client.crt", remote: true }
+
+- name: generate monitoring mysql client config
+  template:
+    src: files/monitoring.my.cnf.tpl
+    dest: "/usr/lib64/nagios/plugins/aku/.my.cnf"
+    owner: "nagios"
+    group: "nagios"
+    mode: 0600
+
+- name: copy galera scripts
+  copy:
+    src: "files/scripts/"
+    dest: /opt/galera/scripts/
+    owner: root
+    group: root
+    mode: 0765
+
+- name: copy systemd files
+  copy:
+    src: files/systemd/
+    dest: /lib/systemd/system/
+    owner: root
+    group: root
+    mode: 0444
+  register: instance_switch
+
+- name: start and activate systemd instance switch
+  service:
+    name: instance_switch.socket
+    enabled: yes
+    state: started
+
